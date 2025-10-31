@@ -2,7 +2,6 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:story/story_image.dart';
 
 typedef _StoryItemBuilder = Widget Function(
@@ -13,7 +12,46 @@ typedef _StoryItemBuilder = Widget Function(
 
 typedef _StoryConfigFunction = int Function(int pageIndex);
 
-enum IndicatorAnimationCommand { pause, resume }
+/// Actions for controlling story indicator animation
+enum _StoryIndicatorAction { restart, start, pause }
+
+/// Controller for managing story indicator animation states
+class StoryIndicatorAnimationController {
+  final List<void Function(_StoryIndicatorAction)> _listeners = [];
+
+  void addListener(void Function(_StoryIndicatorAction) listener) {
+    _listeners.add(listener);
+  }
+
+  void removeListener(void Function(_StoryIndicatorAction) listener) {
+    _listeners.remove(listener);
+  }
+
+  void _notifyListeners(_StoryIndicatorAction action) {
+    for (final listener in _listeners) {
+      listener(action);
+    }
+  }
+
+  /// Restart the current story animation from the beginning
+  void restart() {
+    _notifyListeners(_StoryIndicatorAction.restart);
+  }
+
+  /// Start/resume the story animation
+  void start() {
+    _notifyListeners(_StoryIndicatorAction.start);
+  }
+
+  /// Pause the story animation
+  void pause() {
+    _notifyListeners(_StoryIndicatorAction.pause);
+  }
+
+  void dispose() {
+    _listeners.clear();
+  }
+}
 
 /// PageView to implement story like UI
 ///
@@ -99,9 +137,9 @@ class StoryPageView extends StatefulWidget {
   /// Whether to show shadow near indicator
   final bool showShadow;
 
-  /// A stream with [IndicatorAnimationCommand] to force pause or continue inticator animation
+  /// Controller to pause, start, or restart indicator animation
   /// Useful when you need to show any popup over the story
-  final ValueNotifier<IndicatorAnimationCommand>? indicatorAnimationController;
+  final StoryIndicatorAnimationController? indicatorAnimationController;
 
   @override
   _StoryPageViewState createState() => _StoryPageViewState();
@@ -213,6 +251,77 @@ class _StoryPageViewState extends State<StoryPageView> {
   }
 }
 
+/// Wrapper widget that creates and provides controllers via InheritedWidgets
+class _StoryPageBuilderWrapper extends StatefulWidget {
+  const _StoryPageBuilderWrapper({
+    Key? key,
+    required this.pageIndex,
+    required this.pageLength,
+    required this.storyLength,
+    required this.initialStoryIndex,
+    required this.animateToPage,
+    required this.onPageLimitReached,
+    required this.child,
+  }) : super(key: key);
+
+  final int pageIndex;
+  final int pageLength;
+  final int storyLength;
+  final int initialStoryIndex;
+  final ValueChanged<int> animateToPage;
+  final VoidCallback? onPageLimitReached;
+  final Widget child;
+
+  @override
+  _StoryPageBuilderWrapperState createState() =>
+      _StoryPageBuilderWrapperState();
+}
+
+class _StoryPageBuilderWrapperState extends State<_StoryPageBuilderWrapper> {
+  late _StoryLimitController _limitController;
+  late _StoryStackController _stackController;
+
+  @override
+  void initState() {
+    super.initState();
+    _limitController = _StoryLimitController();
+    _stackController = _StoryStackController(
+      storyLength: widget.storyLength,
+      onPageBack: () {
+        if (widget.pageIndex != 0) {
+          widget.animateToPage(widget.pageIndex - 1);
+        }
+      },
+      onPageForward: () {
+        if (widget.pageIndex == widget.pageLength - 1) {
+          _limitController.onPageLimitReached(widget.onPageLimitReached);
+        } else {
+          widget.animateToPage(widget.pageIndex + 1);
+        }
+      },
+      initialStoryIndex: widget.initialStoryIndex,
+    );
+  }
+
+  @override
+  void dispose() {
+    _limitController.dispose();
+    _stackController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _StoryLimitInheritedWidget(
+      controller: _limitController,
+      child: _StoryStackInheritedWidget(
+        controller: _stackController,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 class _StoryPageBuilder extends StatefulWidget {
   const _StoryPageBuilder._({
     Key? key,
@@ -241,7 +350,7 @@ class _StoryPageBuilder extends StatefulWidget {
   final _StoryItemBuilder? gestureItemBuilder;
   final Duration indicatorDuration;
   final EdgeInsetsGeometry indicatorPadding;
-  final ValueNotifier<IndicatorAnimationCommand>? indicatorAnimationController;
+  final StoryIndicatorAnimationController? indicatorAnimationController;
   final Color indicatorVisitedColor;
   final Color indicatorUnvisitedColor;
   final double indicatorHeight;
@@ -261,40 +370,20 @@ class _StoryPageBuilder extends StatefulWidget {
     _StoryItemBuilder? gestureItemBuilder,
     required Duration indicatorDuration,
     required EdgeInsetsGeometry indicatorPadding,
-    required ValueNotifier<IndicatorAnimationCommand>?
-        indicatorAnimationController,
+    required StoryIndicatorAnimationController? indicatorAnimationController,
     required Color indicatorVisitedColor,
     required Color indicatorUnvisitedColor,
     required double indicatorHeight,
     required double indicatorRadius,
     required bool showShadow,
   }) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(
-          create: (_context) => _StoryLimitController(),
-        ),
-        ChangeNotifierProvider(
-          create: (_context) => _StoryStackController(
-            storyLength: storyLength,
-            onPageBack: () {
-              if (pageIndex != 0) {
-                animateToPage(pageIndex - 1);
-              }
-            },
-            onPageForward: () {
-              if (pageIndex == pageLength - 1) {
-                _context
-                    .read<_StoryLimitController>()
-                    .onPageLimitReached(onPageLimitReached);
-              } else {
-                animateToPage(pageIndex + 1);
-              }
-            },
-            initialStoryIndex: initialStoryIndex,
-          ),
-        ),
-      ],
+    return _StoryPageBuilderWrapper(
+      pageIndex: pageIndex,
+      pageLength: pageLength,
+      storyLength: storyLength,
+      initialStoryIndex: initialStoryIndex,
+      animateToPage: animateToPage,
+      onPageLimitReached: onPageLimitReached,
       child: _StoryPageBuilder._(
         showShadow: showShadow,
         storyLength: storyLength,
@@ -325,26 +414,32 @@ class _StoryPageBuilderState extends State<_StoryPageBuilder>
         SingleTickerProviderStateMixin {
   late AnimationController animationController;
 
-  late VoidCallback indicatorListener;
+  late void Function(_StoryIndicatorAction) indicatorListener;
   late VoidCallback imageLoadingListener;
 
   @override
   void initState() {
     super.initState();
 
-    indicatorListener = () {
+    indicatorListener = (_StoryIndicatorAction action) {
       if (widget.isCurrentPage) {
-        switch (widget.indicatorAnimationController?.value) {
-          case IndicatorAnimationCommand.pause:
+        switch (action) {
+          case _StoryIndicatorAction.pause:
             animationController.stop();
             break;
-          case IndicatorAnimationCommand.resume:
-          default:
+          case _StoryIndicatorAction.start:
             if (storyImageLoadingController.value ==
                 StoryImageLoadingState.loading) {
               return;
             }
             animationController.forward();
+            break;
+          case _StoryIndicatorAction.restart:
+            if (storyImageLoadingController.value ==
+                StoryImageLoadingState.loading) {
+              return;
+            }
+            animationController.forward(from: 0);
             break;
         }
       }
@@ -356,10 +451,6 @@ class _StoryPageBuilderState extends State<_StoryPageBuilder>
             animationController.stop();
             break;
           case StoryImageLoadingState.available:
-            if (widget.indicatorAnimationController?.value ==
-                IndicatorAnimationCommand.pause) {
-              return;
-            }
             animationController.forward();
             break;
         }
@@ -371,7 +462,7 @@ class _StoryPageBuilderState extends State<_StoryPageBuilder>
     )..addStatusListener(
         (status) {
           if (status == AnimationStatus.completed) {
-            context.read<_StoryStackController>().increment(
+            _StoryStackInheritedWidget.of(context).increment(
                 restartAnimation: () => animationController.forward(from: 0));
           }
         },
@@ -404,7 +495,7 @@ class _StoryPageBuilderState extends State<_StoryPageBuilder>
           child: widget.itemBuilder(
             context,
             widget.pageIndex,
-            context.watch<_StoryStackController>().value,
+            _StoryStackInheritedWidget.of(context).value,
           ),
         ),
         Container(
@@ -440,7 +531,7 @@ class _StoryPageBuilderState extends State<_StoryPageBuilder>
           child: widget.gestureItemBuilder?.call(
                 context,
                 widget.pageIndex,
-                context.watch<_StoryStackController>().value,
+                _StoryStackInheritedWidget.of(context).value,
               ) ??
               const SizedBox.shrink(),
         ),
@@ -470,7 +561,7 @@ class _Gestures extends StatelessWidget {
             child: GestureDetector(
               onTap: () {
                 animationController!.forward(from: 0);
-                context.read<_StoryStackController>().decrement();
+                _StoryStackInheritedWidget.of(context).decrement();
               },
               onTapDown: (_) {
                 animationController!.stop();
@@ -498,11 +589,10 @@ class _Gestures extends StatelessWidget {
             color: Colors.transparent,
             child: GestureDetector(
               onTap: () {
-                context.read<_StoryStackController>().increment(
-                      restartAnimation: () =>
-                          animationController!.forward(from: 0),
-                      completeAnimation: () => animationController!.value = 1,
-                    );
+                _StoryStackInheritedWidget.of(context).increment(
+                  restartAnimation: () => animationController!.forward(from: 0),
+                  completeAnimation: () => animationController!.value = 1,
+                );
               },
               onTapDown: (_) {
                 animationController!.stop();
@@ -553,7 +643,7 @@ class _Indicators extends StatefulWidget {
   final Color indicatorUnvisitedColor;
   final double indicatorHeight;
   final double indicatorRadius;
-  final ValueNotifier<IndicatorAnimationCommand>? indicatorAnimationController;
+  final StoryIndicatorAnimationController? indicatorAnimationController;
 
   @override
   _IndicatorsState createState() => _IndicatorsState();
@@ -577,8 +667,8 @@ class _IndicatorsState extends State<_Indicators> {
 
   @override
   Widget build(BuildContext context) {
-    final int currentStoryIndex = context.watch<_StoryStackController>().value;
-    final bool isStoryEnded = context.watch<_StoryLimitController>().value;
+    final int currentStoryIndex = _StoryStackInheritedWidget.of(context).value;
+    final bool isStoryEnded = _StoryLimitInheritedWidget.of(context).value;
     if (!widget.isCurrentPage && widget.isPaging) {
       widget.animationController!.stop();
     }
@@ -657,6 +747,40 @@ class _Indicator extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// InheritedWidget for _StoryStackController
+class _StoryStackInheritedWidget
+    extends InheritedNotifier<_StoryStackController> {
+  const _StoryStackInheritedWidget({
+    Key? key,
+    required _StoryStackController controller,
+    required Widget child,
+  }) : super(key: key, notifier: controller, child: child);
+
+  static _StoryStackController of(BuildContext context) {
+    final widget = context
+        .dependOnInheritedWidgetOfExactType<_StoryStackInheritedWidget>();
+    assert(widget != null, '_StoryStackInheritedWidget not found in context');
+    return widget!.notifier!;
+  }
+}
+
+/// InheritedWidget for _StoryLimitController
+class _StoryLimitInheritedWidget
+    extends InheritedNotifier<_StoryLimitController> {
+  const _StoryLimitInheritedWidget({
+    Key? key,
+    required _StoryLimitController controller,
+    required Widget child,
+  }) : super(key: key, notifier: controller, child: child);
+
+  static _StoryLimitController of(BuildContext context) {
+    final widget = context
+        .dependOnInheritedWidgetOfExactType<_StoryLimitInheritedWidget>();
+    assert(widget != null, '_StoryLimitInheritedWidget not found in context');
+    return widget!.notifier!;
   }
 }
 

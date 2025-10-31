@@ -104,13 +104,12 @@ class StoryPage extends StatefulWidget {
 }
 
 class _StoryPageState extends State<StoryPage> {
-  late ValueNotifier<IndicatorAnimationCommand> indicatorAnimationController;
+  late StoryIndicatorAnimationController indicatorAnimationController;
 
   @override
   void initState() {
     super.initState();
-    indicatorAnimationController = ValueNotifier<IndicatorAnimationCommand>(
-        IndicatorAnimationCommand.resume);
+    indicatorAnimationController = StoryIndicatorAnimationController();
   }
 
   @override
@@ -193,8 +192,7 @@ class _StoryPageState extends State<StoryPage> {
                 child: ElevatedButton(
                   child: const Text('show modal bottom sheet'),
                   onPressed: () async {
-                    indicatorAnimationController.value =
-                        IndicatorAnimationCommand.pause;
+                    indicatorAnimationController.pause();
                     await showModalBottomSheet(
                       context: context,
                       builder: (context) => SizedBox(
@@ -203,15 +201,14 @@ class _StoryPageState extends State<StoryPage> {
                           padding: const EdgeInsets.all(24),
                           child: Text(
                             'Look! The indicator is now paused\n\n'
-                            'It will be coutinued after closing the modal bottom sheet.',
+                            'It will be continued after closing the modal bottom sheet.',
                             style: Theme.of(context).textTheme.headlineSmall,
                             textAlign: TextAlign.center,
                           ),
                         ),
                       ),
                     );
-                    indicatorAnimationController.value =
-                        IndicatorAnimationCommand.resume;
+                    indicatorAnimationController.start();
                   },
                 ),
               ),
