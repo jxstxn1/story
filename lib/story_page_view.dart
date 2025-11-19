@@ -12,6 +12,50 @@ typedef _StoryItemBuilder = Widget Function(
 
 typedef _StoryConfigFunction = int Function(int pageIndex);
 
+/// Represents the position of a story within its group/page.
+typedef StoryPosition = ({int storyGroup, int story});
+
+/// Direction for story navigation events.
+enum StoryNavigationDirection { forward, backward }
+
+/// Event payload emitted whenever the user navigates between story groups.
+class StoryNavigationEvent {
+  const StoryNavigationEvent({
+    required this.direction,
+    required this.from,
+    required this.to,
+  });
+
+  final StoryNavigationDirection direction;
+  final StoryPosition from;
+  final StoryPosition to;
+}
+
+/// Controller that allows listening to story navigation events.
+class StoryNavigationController {
+  final List<ValueChanged<StoryNavigationEvent>> _listeners = [];
+
+  void addListener(ValueChanged<StoryNavigationEvent> listener) {
+    _listeners.add(listener);
+  }
+
+  void removeListener(ValueChanged<StoryNavigationEvent> listener) {
+    _listeners.remove(listener);
+  }
+
+  void dispatch(StoryNavigationEvent event) {
+    for (final listener in List<ValueChanged<StoryNavigationEvent>>.from(
+      _listeners,
+    )) {
+      listener(event);
+    }
+  }
+
+  void dispose() {
+    _listeners.clear();
+  }
+}
+
 /// Actions for controlling story indicator animation
 enum StoryIndicatorAction { restart, start, pause }
 
@@ -71,6 +115,7 @@ class StoryPageView extends StatefulWidget {
         const EdgeInsets.symmetric(vertical: 32, horizontal: 8),
     this.backgroundColor = Colors.black,
     this.indicatorAnimationController,
+    this.navigationController,
     this.onPageChanged,
     this.onPageOverscroll,
     this.indicatorVisitedColor = Colors.white,
@@ -143,11 +188,14 @@ class StoryPageView extends StatefulWidget {
   /// Useful when you need to show any popup over the story
   final StoryIndicatorAnimationController? indicatorAnimationController;
 
+  /// Controller that emits navigation events for listeners.
+  final StoryNavigationController? navigationController;
+
   /// Called when the user navigates to the next page.
-  final void Function(int prev, int next)? onNextPage;
+  final void Function(StoryPosition prev, StoryPosition next)? onNextPage;
 
   /// Called when the user navigates to the previous page.
-  final void Function(int prev, int next)? onPrevPage;
+  final void Function(StoryPosition prev, StoryPosition next)? onPrevPage;
 
   @override
   _StoryPageViewState createState() => _StoryPageViewState();
@@ -157,6 +205,7 @@ class _StoryPageViewState extends State<StoryPageView> {
   late PageController pageController;
 
   var currentPageValue;
+  final Map<int, int> _pageStoryPositions = {};
 
   @override
   void initState() {
@@ -183,6 +232,52 @@ class _StoryPageViewState extends State<StoryPageView> {
     }
 
     setState(() => currentPageValue = pageController.page);
+  }
+
+  void _handleStoryChanged(int pageIndex, int storyIndex) {
+    _pageStoryPositions[pageIndex] = storyIndex;
+  }
+
+  void _handleNavigation(
+    StoryNavigationDirection direction,
+    int fromPageIndex,
+  ) {
+    final fromPosition = _storyPositionForPage(fromPageIndex);
+    final targetPageIndex = direction == StoryNavigationDirection.forward
+        ? fromPageIndex + 1
+        : fromPageIndex - 1;
+    final toPosition = _storyPositionForPage(targetPageIndex);
+
+    switch (direction) {
+      case StoryNavigationDirection.forward:
+        widget.onNextPage?.call(fromPosition, toPosition);
+        break;
+      case StoryNavigationDirection.backward:
+        widget.onPrevPage?.call(fromPosition, toPosition);
+        break;
+    }
+
+    widget.navigationController?.dispatch(
+      StoryNavigationEvent(
+        direction: direction,
+        from: fromPosition,
+        to: toPosition,
+      ),
+    );
+  }
+
+  StoryPosition _storyPositionForPage(int pageIndex) {
+    if (pageIndex < 0 || pageIndex >= widget.pageLength) {
+      return (storyGroup: pageIndex, story: 0);
+    }
+
+    final configuredStoryIndex = _pageStoryPositions[pageIndex] ??
+        widget.initialStoryIndex?.call(pageIndex) ??
+        0;
+    final maxStoryIndex = max(0, widget.storyLength(pageIndex) - 1);
+    final clampedStoryIndex = configuredStoryIndex.clamp(0, maxStoryIndex);
+
+    return (storyGroup: pageIndex, story: clampedStoryIndex);
   }
 
   @override
@@ -240,6 +335,10 @@ class _StoryPageViewState extends State<StoryPageView> {
                       widget.indicatorAnimationController,
                   indicatorUnvisitedColor: widget.indicatorUnvisitedColor,
                   indicatorVisitedColor: widget.indicatorVisitedColor,
+                  onStoryChanged: (storyIndex) =>
+                      _handleStoryChanged(index, storyIndex),
+                  onNavigate: (direction) =>
+                      _handleNavigation(direction, index),
                 ),
                 if (isPaging && !isLeaving)
                   Positioned.fill(
@@ -270,8 +369,8 @@ class _StoryPageBuilderWrapper extends StatefulWidget {
     required this.animateToPage,
     required this.onPageLimitReached,
     required this.child,
-    required this.onNextPage,
-    required this.onPrevPage,
+    required this.onStoryChanged,
+    required this.onNavigate,
   }) : super(key: key);
 
   final int pageIndex;
@@ -281,8 +380,8 @@ class _StoryPageBuilderWrapper extends StatefulWidget {
   final ValueChanged<int> animateToPage;
   final VoidCallback? onPageLimitReached;
   final Widget child;
-  final void Function(int prev, int next)? onNextPage;
-  final void Function(int prev, int next)? onPrevPage;
+  final ValueChanged<int> onStoryChanged;
+  final void Function(StoryNavigationDirection direction) onNavigate;
 
   @override
   _StoryPageBuilderWrapperState createState() =>
@@ -293,6 +392,10 @@ class _StoryPageBuilderWrapperState extends State<_StoryPageBuilderWrapper> {
   late _StoryLimitController _limitController;
   late _StoryStackController _stackController;
 
+  void _handleStoryIndexChanged() {
+    widget.onStoryChanged(_stackController.value);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -301,25 +404,27 @@ class _StoryPageBuilderWrapperState extends State<_StoryPageBuilderWrapper> {
       storyLength: widget.storyLength,
       onPageBack: () {
         if (widget.pageIndex != 0) {
+          widget.onNavigate(StoryNavigationDirection.backward);
           widget.animateToPage(widget.pageIndex - 1);
-          widget.onPrevPage?.call(widget.pageIndex, widget.pageIndex - 1);
         }
       },
       onPageForward: () {
+        widget.onNavigate(StoryNavigationDirection.forward);
         if (widget.pageIndex == widget.pageLength - 1) {
-          widget.onNextPage?.call(widget.pageIndex, widget.pageIndex + 1);
           _limitController.onPageLimitReached(widget.onPageLimitReached);
-        } else {
-          widget.animateToPage(widget.pageIndex + 1);
-          widget.onNextPage?.call(widget.pageIndex, widget.pageIndex + 1);
+          return;
         }
+        widget.animateToPage(widget.pageIndex + 1);
       },
       initialStoryIndex: widget.initialStoryIndex,
     );
+    _stackController.addListener(_handleStoryIndexChanged);
+    _handleStoryIndexChanged();
   }
 
   @override
   void dispose() {
+    _stackController.removeListener(_handleStoryIndexChanged);
     _limitController.dispose();
     _stackController.dispose();
     super.dispose();
@@ -391,8 +496,8 @@ class _StoryPageBuilder extends StatefulWidget {
     required double indicatorHeight,
     required double indicatorRadius,
     required bool showShadow,
-    void Function(int prev, int next)? onNextPage,
-    void Function(int prev, int next)? onPrevPage,
+    required ValueChanged<int> onStoryChanged,
+    required void Function(StoryNavigationDirection direction) onNavigate,
   }) {
     return _StoryPageBuilderWrapper(
       pageIndex: pageIndex,
@@ -401,8 +506,8 @@ class _StoryPageBuilder extends StatefulWidget {
       initialStoryIndex: initialStoryIndex,
       animateToPage: animateToPage,
       onPageLimitReached: onPageLimitReached,
-      onNextPage: onNextPage,
-      onPrevPage: onPrevPage,
+      onStoryChanged: onStoryChanged,
+      onNavigate: onNavigate,
       child: _StoryPageBuilder._(
         showShadow: showShadow,
         storyLength: storyLength,
