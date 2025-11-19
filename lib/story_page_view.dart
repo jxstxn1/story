@@ -13,21 +13,21 @@ typedef _StoryItemBuilder = Widget Function(
 typedef _StoryConfigFunction = int Function(int pageIndex);
 
 /// Actions for controlling story indicator animation
-enum _StoryIndicatorAction { restart, start, pause }
+enum StoryIndicatorAction { restart, start, pause }
 
 /// Controller for managing story indicator animation states
 class StoryIndicatorAnimationController {
-  final List<void Function(_StoryIndicatorAction)> _listeners = [];
+  final List<void Function(StoryIndicatorAction)> _listeners = [];
 
-  void addListener(void Function(_StoryIndicatorAction) listener) {
+  void addListener(void Function(StoryIndicatorAction) listener) {
     _listeners.add(listener);
   }
 
-  void removeListener(void Function(_StoryIndicatorAction) listener) {
+  void removeListener(void Function(StoryIndicatorAction) listener) {
     _listeners.remove(listener);
   }
 
-  void _notifyListeners(_StoryIndicatorAction action) {
+  void _notifyListeners(StoryIndicatorAction action) {
     for (final listener in _listeners) {
       listener(action);
     }
@@ -35,17 +35,17 @@ class StoryIndicatorAnimationController {
 
   /// Restart the current story animation from the beginning
   void restart() {
-    _notifyListeners(_StoryIndicatorAction.restart);
+    _notifyListeners(StoryIndicatorAction.restart);
   }
 
   /// Start/resume the story animation
   void start() {
-    _notifyListeners(_StoryIndicatorAction.start);
+    _notifyListeners(StoryIndicatorAction.start);
   }
 
   /// Pause the story animation
   void pause() {
-    _notifyListeners(_StoryIndicatorAction.pause);
+    _notifyListeners(StoryIndicatorAction.pause);
   }
 
   void dispose() {
@@ -414,27 +414,27 @@ class _StoryPageBuilderState extends State<_StoryPageBuilder>
         SingleTickerProviderStateMixin {
   late AnimationController animationController;
 
-  late void Function(_StoryIndicatorAction) indicatorListener;
+  late void Function(StoryIndicatorAction) indicatorListener;
   late VoidCallback imageLoadingListener;
 
   @override
   void initState() {
     super.initState();
 
-    indicatorListener = (_StoryIndicatorAction action) {
+    indicatorListener = (StoryIndicatorAction action) {
       if (widget.isCurrentPage) {
         switch (action) {
-          case _StoryIndicatorAction.pause:
+          case StoryIndicatorAction.pause:
             animationController.stop();
             break;
-          case _StoryIndicatorAction.start:
+          case StoryIndicatorAction.start:
             if (storyImageLoadingController.value ==
                 StoryImageLoadingState.loading) {
               return;
             }
             animationController.forward();
             break;
-          case _StoryIndicatorAction.restart:
+          case StoryIndicatorAction.restart:
             if (storyImageLoadingController.value ==
                 StoryImageLoadingState.loading) {
               return;
