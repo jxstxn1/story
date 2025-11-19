@@ -78,6 +78,8 @@ class StoryPageView extends StatefulWidget {
     this.indicatorHeight = 2,
     this.indicatorRadius = 10,
     this.showShadow = false,
+    this.onNextPage,
+    this.onPrevPage,
   }) : super(key: key);
 
   ///  visited color of [_Indicators]
@@ -140,6 +142,12 @@ class StoryPageView extends StatefulWidget {
   /// Controller to pause, start, or restart indicator animation
   /// Useful when you need to show any popup over the story
   final StoryIndicatorAnimationController? indicatorAnimationController;
+
+  /// Called when the user navigates to the next page.
+  final void Function(int prev, int next)? onNextPage;
+
+  /// Called when the user navigates to the previous page.
+  final void Function(int prev, int next)? onPrevPage;
 
   @override
   _StoryPageViewState createState() => _StoryPageViewState();
@@ -262,6 +270,8 @@ class _StoryPageBuilderWrapper extends StatefulWidget {
     required this.animateToPage,
     required this.onPageLimitReached,
     required this.child,
+    required this.onNextPage,
+    required this.onPrevPage,
   }) : super(key: key);
 
   final int pageIndex;
@@ -271,6 +281,8 @@ class _StoryPageBuilderWrapper extends StatefulWidget {
   final ValueChanged<int> animateToPage;
   final VoidCallback? onPageLimitReached;
   final Widget child;
+  final void Function(int prev, int next)? onNextPage;
+  final void Function(int prev, int next)? onPrevPage;
 
   @override
   _StoryPageBuilderWrapperState createState() =>
@@ -290,13 +302,16 @@ class _StoryPageBuilderWrapperState extends State<_StoryPageBuilderWrapper> {
       onPageBack: () {
         if (widget.pageIndex != 0) {
           widget.animateToPage(widget.pageIndex - 1);
+          widget.onPrevPage?.call(widget.pageIndex, widget.pageIndex - 1);
         }
       },
       onPageForward: () {
         if (widget.pageIndex == widget.pageLength - 1) {
+          widget.onNextPage?.call(widget.pageIndex, widget.pageIndex + 1);
           _limitController.onPageLimitReached(widget.onPageLimitReached);
         } else {
           widget.animateToPage(widget.pageIndex + 1);
+          widget.onNextPage?.call(widget.pageIndex, widget.pageIndex + 1);
         }
       },
       initialStoryIndex: widget.initialStoryIndex,
@@ -376,6 +391,8 @@ class _StoryPageBuilder extends StatefulWidget {
     required double indicatorHeight,
     required double indicatorRadius,
     required bool showShadow,
+    void Function(int prev, int next)? onNextPage,
+    void Function(int prev, int next)? onPrevPage,
   }) {
     return _StoryPageBuilderWrapper(
       pageIndex: pageIndex,
@@ -384,6 +401,8 @@ class _StoryPageBuilder extends StatefulWidget {
       initialStoryIndex: initialStoryIndex,
       animateToPage: animateToPage,
       onPageLimitReached: onPageLimitReached,
+      onNextPage: onNextPage,
+      onPrevPage: onPrevPage,
       child: _StoryPageBuilder._(
         showShadow: showShadow,
         storyLength: storyLength,
@@ -798,8 +817,10 @@ class _StoryStackController extends ValueNotifier<int> {
 
   int get limitIndex => storyLength - 1;
 
-  void increment(
-      {VoidCallback? restartAnimation, VoidCallback? completeAnimation}) {
+  void increment({
+    VoidCallback? restartAnimation,
+    VoidCallback? completeAnimation,
+  }) {
     if (value == limitIndex) {
       completeAnimation?.call();
       onPageForward();
